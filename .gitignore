@@ -1,0 +1,59 @@
+# Byte-compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+pythonenv*
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.code-workspace
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
+
+# Database files
+*.pkl
+*.pickle
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+
+# OS specific files
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+._*
+
+# Python testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# System files
+*.exe
+*.dll
+*.dylib
+
+# Downloads
+downloads/
+temp/
+tmp/
