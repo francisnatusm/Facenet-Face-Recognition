@@ -145,7 +145,8 @@ def load_facenet_model(model_json_path='keras-facenet-h5/model.json',
 
 def img_to_encoding(image_path, model):
     """
-    Convert image to 128-dimensional face encoding
+    Convert image to 128-dimensional face encoding.
+    Raises ValueError if the image doesn't appear to contain a face.
     
     Arguments:
         image_path -- path to input image
@@ -155,17 +156,14 @@ def img_to_encoding(image_path, model):
         embedding -- normalized 128-dimensional face encoding
     """
     img = keras.utils.load_img(image_path, target_size=(160, 160))
-    img = np.around(np.array(img) / 255.0, decimals=12)
-    
-    # Add batch dimension
-    x_train = np.expand_dims(img, axis=0)
-    
-    # Get encoding from model
+    img_array = np.around(np.array(img) / 255.0, decimals=12)
+
+    if np.std(img_array) < 0.15:
+        raise ValueError(f"Image '{image_path}' does not appear to contain a face.")
+
+    x_train = np.expand_dims(img_array, axis=0)
     embedding = model.predict_on_batch(x_train)
-    
-    # Normalize encoding (L2 normalization)
     embedding = embedding / np.linalg.norm(embedding, ord=2)
-    
     return embedding
 
 
@@ -213,7 +211,7 @@ def create_database(FRmodel, image_paths=None):
 # FACE VERIFICATION FUNCTION
 # ============================================
 
-def verify(image_path, identity, database, model, threshold=0.7):
+def verify(image_path, identity, database, model, threshold=0.5):
     """
     Verify if the person in the image matches the claimed identity
     
@@ -222,17 +220,19 @@ def verify(image_path, identity, database, model, threshold=0.7):
         identity -- string, name of the person to verify against
         database -- dictionary of known face encodings
         model -- FaceNet model
-        threshold -- distance threshold for verification (default 0.7)
+        threshold -- distance threshold for verification (default 0.5)
     
     Returns:
         dist -- distance between image and database encoding
         door_open -- True if identity verified, False otherwise
     """
     
-    # Step 1: Compute encoding for the image
-    encoding = img_to_encoding(image_path, model)
+    try:
+        encoding = img_to_encoding(image_path, model)
+    except ValueError as e:
+        print(f"⚠️ {e}")
+        return None, False
     
-    # Step 2: Compute distance with identity's encoding
     dist = np.linalg.norm(encoding - database[identity])
     
     # Step 3: Verify based on threshold
@@ -250,7 +250,7 @@ def verify(image_path, identity, database, model, threshold=0.7):
 # FACE RECOGNITION FUNCTION
 # ============================================
 
-def who_is_it(image_path, database, model, threshold=0.7):
+def who_is_it(image_path, database, model, threshold=0.5):
     """
     Identify the person in the image by comparing with database
     
@@ -265,10 +265,12 @@ def who_is_it(image_path, database, model, threshold=0.7):
         identity -- name of identified person
     """
     
-    # Step 1: Compute encoding for the image
-    encoding = img_to_encoding(image_path, model)
+    try:
+        encoding = img_to_encoding(image_path, model)
+    except ValueError as e:
+        print(f"⚠️ {e}")
+        return None, None
     
-    # Step 2: Find closest encoding in database
     min_dist = 100  # Initialize to large value
     identity = None
     
