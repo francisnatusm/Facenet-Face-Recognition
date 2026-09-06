@@ -171,39 +171,134 @@ def img_to_encoding(image_path, model):
 # DATABASE CREATION
 # ============================================
 
-def create_database(FRmodel, image_paths=None):
+DEFAULT_DEMO_PATHS = {
+    "danielle": "images/danielle.png",
+    "younes": "images/younes.jpg",
+    "tian": "images/tian.jpg",
+    "andrew": "images/andrew.jpg",
+    "kian": "images/kian.jpg",
+    "dan": "images/dan.jpg",
+    "sebastiano": "images/sebastiano.jpg",
+    "bertrand": "images/bertrand.jpg",
+    "kevin": "images/kevin.jpg",
+    "felix": "images/felix.jpg",
+    "benoit": "images/benoit.jpg",
+    "arnaud": "images/arnaud.jpg",
+}
+
+IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png')
+
+
+def _is_image_file(filename):
+    return filename.lower().endswith(IMAGE_EXTENSIONS)
+
+
+def discover_enrollments(database_dir='database'):
     """
-    Create database of face encodings for known people
-    
-    Arguments:
-        FRmodel -- FaceNet model
-        image_paths -- dictionary mapping names to image paths
-    
+    Discover people to enroll from a folder.
+
+    Supported layouts (can mix both):
+      1) One folder per person (best for 100–500 people, multiple photos):
+           database/alice/1.jpg
+           database/alice/2.jpg
+           database/bob/photo.png
+      2) Flat files named after the person:
+           database/alice.jpg
+           database/bob.png
+
     Returns:
-        database -- dictionary mapping names to face encodings
+        dict mapping name -> list of image paths
+    """
+    enrollments = {}
+    if not os.path.isdir(database_dir):
+        return enrollments
+
+    for entry in sorted(os.listdir(database_dir)):
+        path = os.path.join(database_dir, entry)
+        if os.path.isdir(path):
+            photos = [
+                os.path.join(path, f)
+                for f in sorted(os.listdir(path))
+                if _is_image_file(f)
+            ]
+            if photos:
+                enrollments[entry] = photos
+        elif _is_image_file(entry):
+            name = os.path.splitext(entry)[0]
+            enrollments.setdefault(name, []).append(path)
+
+    return enrollments
+
+
+def encode_person(image_paths, model):
+    """
+    Encode one or more photos of the same person and average the embeddings.
+    Averaging multiple photos usually improves recognition quality.
+    """
+    embeddings = []
+    for path in image_paths:
+        try:
+            embeddings.append(img_to_encoding(path, model))
+        except ValueError as e:
+            print(f"   ⚠️ Skipping {path}: {e}")
+
+    if not embeddings:
+        return None
+
+    avg = np.mean(np.vstack(embeddings), axis=0, keepdims=True)
+    avg = avg / np.linalg.norm(avg, ord=2)
+    return avg
+
+
+def create_database(FRmodel, image_paths=None, database_dir='database'):
+    """
+    Create database of face encodings for known people.
+
+    Priority:
+      1. Explicit image_paths dict (name -> path or list of paths)
+      2. Photos found under database_dir/ (scales to 100–500+ people)
+      3. Built-in 12-person demo list under images/
     """
     if image_paths is None:
-        # Default database
-        image_paths = {
-            "danielle": "images/danielle.png",
-            "younes": "images/younes.jpg",
-            "tian": "images/tian.jpg",
-            "andrew": "images/andrew.jpg",
-            "kian": "images/kian.jpg",
-            "dan": "images/dan.jpg",
-            "sebastiano": "images/sebastiano.jpg",
-            "bertrand": "images/bertrand.jpg",
-            "kevin": "images/kevin.jpg",
-            "felix": "images/felix.jpg",
-            "benoit": "images/benoit.jpg",
-            "arnaud": "images/arnaud.jpg"
+        enrollments = discover_enrollments(database_dir)
+        if enrollments:
+            print(f"   Found {len(enrollments)} people in '{database_dir}/'")
+        else:
+            print("   No custom database folder found — using 12-person demo set")
+            enrollments = {name: [path] for name, path in DEFAULT_DEMO_PATHS.items()}
+    else:
+        enrollments = {
+            name: ([paths] if isinstance(paths, str) else list(paths))
+            for name, paths in image_paths.items()
         }
-    
+
     database = {}
-    for name, path in image_paths.items():
-        database[name] = img_to_encoding(path, FRmodel)
-        print(f"✅ Added {name} to database")
-    
+    for name, paths in enrollments.items():
+        encoding = encode_person(paths, FRmodel)
+        if encoding is None:
+            print(f"   ❌ Could not enroll {name} (no valid face photos)")
+            continue
+        database[name] = encoding
+        photo_note = f" ({len(paths)} photos)" if len(paths) > 1 else ""
+        print(f"✅ Added {name} to database{photo_note}")
+
+    return database
+
+
+def save_database(database, path='face_database.pkl'):
+    import pickle
+    with open(path, 'wb') as f:
+        pickle.dump(database, f)
+    print(f"✅ Database saved as '{path}' ({len(database)} people)")
+
+
+def load_saved_database(path='face_database.pkl'):
+    import pickle
+    if not os.path.exists(path):
+        return None
+    with open(path, 'rb') as f:
+        database = pickle.load(f)
+    print(f"✅ Loaded saved database '{path}' ({len(database)} people)")
     return database
 
 
@@ -495,10 +590,21 @@ def main():
         print("   Please ensure model files exist at 'keras-facenet-h5/model.json' and 'keras-facenet-h5/model.h5'")
         return
     
-    # ========== CREATE DATABASE ==========
-    print("\n📚 Creating face database...")
-    database = create_database(FRmodel)
-    print(f"   ✅ Database created with {len(database)} people")
+    # ========== CREATE / LOAD DATABASE ==========
+    print("\n📚 Preparing face database...")
+    print("   Tip: put photos in database/<person_name>/ to scale to 100–500 people")
+
+    saved = load_saved_database()
+    if saved is not None:
+        rebuild = input("   Rebuild from photos instead of using saved database? (y/n): ").strip().lower()
+        if rebuild == 'y':
+            database = create_database(FRmodel)
+        else:
+            database = saved
+    else:
+        database = create_database(FRmodel)
+
+    print(f"   ✅ Database ready with {len(database)} people")
     
     # ========== DISPLAY DATABASE SAMPLE ==========
     print("\n🖼️ Database sample images:")
@@ -544,9 +650,11 @@ def main():
         print("\nOptions:")
         print("1. Verify a person (check if image matches a specific identity)")
         print("2. Recognize a person (identify who is in the image)")
-        print("3. Exit")
+        print("3. List people in database")
+        print("4. Rebuild database from database/ folder")
+        print("5. Exit")
         
-        choice = input("\nEnter your choice (1/2/3): ").strip()
+        choice = input("\nEnter your choice (1/2/3/4/5): ").strip()
         
         if choice == '1':
             identity = input("👤 Enter identity to verify: ").strip()
@@ -586,21 +694,28 @@ def main():
                 image_path = f"images/{image_name}"
                 min_dist, identity = who_is_it(image_path, database, FRmodel)
                 display_image(image_path, title=f"Recognized: {identity}")
-        
+
         elif choice == '3':
+            print(f"\n📋 Database contains {len(database)} people:")
+            for i, name in enumerate(sorted(database.keys()), 1):
+                print(f"   {i:3d}. {name}")
+
+        elif choice == '4':
+            print("\n📚 Rebuilding database from photos...")
+            database = create_database(FRmodel)
+            print(f"   ✅ Database rebuilt with {len(database)} people")
+        
+        elif choice == '5':
             print("\n👋 Goodbye! Thanks for using Face Recognition System!")
             break
         
         else:
-            print("\n❌ Invalid choice. Please enter 1, 2, or 3.")
+            print("\n❌ Invalid choice. Please enter 1, 2, 3, 4, or 5.")
     
     # ========== SAVE DATABASE ==========
     save_db = input("\n💾 Save database for future use? (y/n): ").strip().lower()
     if save_db == 'y':
-        import pickle
-        with open('face_database.pkl', 'wb') as f:
-            pickle.dump(database, f)
-        print("✅ Database saved as 'face_database.pkl'")
+        save_database(database)
     
     print("\n🎉 Program completed successfully!")
 
